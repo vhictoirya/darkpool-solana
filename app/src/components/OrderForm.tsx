@@ -73,7 +73,7 @@ export default function OrderForm() {
     marginBottom: "4px",
   };
 
-  if (false) {
+  if (!connected) {
     return (
       <div style={{ ...panelStyle, padding: "40px 20px", textAlign: "center" }}>
         <div style={{ fontSize: "28px", marginBottom: "12px", opacity: 0.3 }}>⬡</div>
