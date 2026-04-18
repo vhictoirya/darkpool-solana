@@ -1,6 +1,0 @@
-{
-  "/api/encrypt/balance/route": "app/api/encrypt/balance/route.js",
-  "/api/ika/dwallet/route": "app/api/ika/dwallet/route.js",
-  "/api/encrypt/order/route": "app/api/encrypt/order/route.js",
-  "/page": "app/page.js"
-}
