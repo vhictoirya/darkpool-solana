@@ -1,0 +1,174 @@
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=IBM+Plex+Sans:wght@300;400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg:        #0a0a08;
+  --bg-panel:  #0f0f0c;
+  --bg-raise:  #141410;
+  --border:    #2a2a20;
+  --border-hi: #3a3a28;
+  --amber:     #f5a623;
+  --amber-dim: #8a5c10;
+  --green:     #4caf72;
+  --green-dim: #1e4a2e;
+  --red:       #e05252;
+  --red-dim:   #4a1e1e;
+  --text:      #d4d0c0;
+  --text-dim:  #7a7868;
+  --text-faint:#3a3830;
+  --violet:    #9b7fe8;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Scanline overlay */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0,0,0,0.08) 2px,
+    rgba(0,0,0,0.08) 4px
+  );
+  pointer-events: none;
+  z-index: 9999;
+}
+
+/* Noise texture */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  opacity: 0.025;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 200px;
+  pointer-events: none;
+  z-index: 9998;
+}
+
+/* Panel */
+.panel {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  position: relative;
+}
+
+.panel::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--border-hi), transparent);
+}
+
+/* Tag label */
+.tag {
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+/* Amber text pulse */
+@keyframes pulse-amber {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.live-dot {
+  display: inline-block;
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+  animation: pulse-amber 2s ease-in-out infinite;
+  box-shadow: 0 0 6px var(--green);
+}
+
+/* Stat blink on update */
+@keyframes stat-flash {
+  0% { color: var(--amber); }
+  100% { color: var(--text); }
+}
+
+.flash { animation: stat-flash 0.4s ease-out; }
+
+/* Input */
+input[type="number"], input[type="text"], select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 13px;
+  padding: 7px 10px;
+  width: 100%;
+  outline: none;
+  transition: border-color 0.15s;
+}
+input:focus, select:focus {
+  border-color: var(--amber-dim);
+}
+input::placeholder { color: var(--text-faint); }
+
+/* Button base */
+button {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  border: none;
+  transition: all 0.12s;
+}
+
+/* Wallet adapter overrides */
+.wallet-adapter-button {
+  font-family: 'IBM Plex Mono', monospace !important;
+  font-size: 11px !important;
+  font-weight: 500 !important;
+  letter-spacing: 0.08em !important;
+  text-transform: uppercase !important;
+  background: transparent !important;
+  border: 1px solid var(--border) !important;
+  color: var(--text-dim) !important;
+  padding: 6px 14px !important;
+  height: auto !important;
+  border-radius: 0 !important;
+  transition: all 0.12s !important;
+}
+.wallet-adapter-button:hover {
+  border-color: var(--amber-dim) !important;
+  color: var(--amber) !important;
+  background: transparent !important;
+}
+.wallet-adapter-modal-wrapper {
+  background: rgba(10,10,8,0.96) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 0 !important;
+}
+.wallet-adapter-modal-title {
+  font-family: 'IBM Plex Mono', monospace !important;
+  color: var(--text) !important;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border-hi); }

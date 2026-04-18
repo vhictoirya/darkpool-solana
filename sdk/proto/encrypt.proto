@@ -1,0 +1,83 @@
+syntax = "proto3";
+package encrypt;
+
+// Encrypt FHE gRPC service.
+// Endpoint: pre-alpha-dev-1.encrypt.ika-network.net:443
+service EncryptService {
+  // Encrypt an order's price and size under FHE.
+  rpc EncryptOrder(EncryptOrderRequest) returns (EncryptOrderResponse);
+
+  // Add a deposit to an existing FHE-encrypted balance (homomorphic addition).
+  rpc EncryptBalance(EncryptBalanceRequest) returns (EncryptBalanceResponse);
+
+  // Submit a pair of encrypted orders for MPC matching.
+  rpc SubmitForMatching(SubmitMatchRequest) returns (SubmitMatchResponse);
+
+  // Retrieve a completed match proof.
+  rpc GetMatchProof(GetMatchProofRequest) returns (GetMatchProofResponse);
+
+  // Poll for pending match results for a given vault/owner.
+  rpc GetPendingMatches(GetPendingMatchesRequest) returns (GetPendingMatchesResponse);
+}
+
+message EncryptOrderRequest {
+  string price      = 1;  // plaintext price as decimal string
+  string size       = 2;  // plaintext size as decimal string
+  uint32 order_type = 3;  // 0=bid, 1=ask
+  bytes  owner      = 4;  // 32-byte Solana pubkey
+}
+
+message EncryptOrderResponse {
+  bytes  encrypted_price  = 1;  // 128-byte FHE ciphertext
+  bytes  encrypted_size   = 2;  // 128-byte FHE ciphertext
+  bytes  order_commitment = 3;  // 32-byte Pedersen commitment
+  string session_id       = 4;
+}
+
+message EncryptBalanceRequest {
+  bytes  current_encrypted = 1;  // existing 128-byte ciphertext (empty for first deposit)
+  string deposit_amount    = 2;  // plaintext amount as decimal string
+  bytes  owner             = 3;
+}
+
+message EncryptBalanceResponse {
+  bytes encrypted_balance = 1;  // updated 128-byte FHE ciphertext
+}
+
+message SubmitMatchRequest {
+  bytes  maker_order_pubkey = 1;
+  bytes  taker_order_pubkey = 2;
+  bytes  maker_commitment   = 3;
+  bytes  taker_commitment   = 4;
+}
+
+message SubmitMatchResponse {
+  string match_session_id = 1;
+  string status           = 2;
+}
+
+message GetMatchProofRequest {
+  string match_session_id = 1;
+}
+
+message GetMatchProofResponse {
+  bytes  match_proof    = 1;  // 256-byte proof
+  uint64 settled_price  = 2;
+  uint64 settled_size   = 3;
+  string status         = 4;  // "pending" | "ready" | "failed"
+}
+
+message GetPendingMatchesRequest {
+  bytes owner = 1;  // 32-byte Solana pubkey
+}
+
+message GetPendingMatchesResponse {
+  repeated PendingMatch matches = 1;
+}
+
+message PendingMatch {
+  string match_session_id   = 1;
+  bytes  maker_order_pubkey = 2;
+  bytes  taker_order_pubkey = 3;
+  string status             = 4;
+}

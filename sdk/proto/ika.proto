@@ -1,0 +1,67 @@
+syntax = "proto3";
+package ika;
+
+// Ika dWallet gRPC service.
+// Endpoint: pre-alpha-dev-1.ika.ika-network.net:443
+service DWalletService {
+  // Create a new dWallet (distributed keygen ceremony).
+  rpc CreateDWallet(CreateDWalletRequest) returns (CreateDWalletResponse);
+
+  // Initiate a threshold-signed transfer on the destination chain.
+  rpc InitiateTransfer(InitiateTransferRequest) returns (InitiateTransferResponse);
+
+  // Get the status of an in-flight transfer.
+  rpc GetTransferStatus(GetTransferStatusRequest) returns (GetTransferStatusResponse);
+
+  // Submit user's MPC share to complete a signing round.
+  rpc SubmitUserShare(SubmitUserShareRequest) returns (SubmitUserShareResponse);
+}
+
+message CreateDWalletRequest {
+  string  chain            = 1;  // "bitcoin" | "ethereum" | "solana"
+  bytes   owner_pubkey     = 2;  // 32-byte Solana pubkey
+  bytes   solana_program   = 3;  // darkpool program ID (32 bytes)
+}
+
+message CreateDWalletResponse {
+  bytes   dwallet_id           = 1;  // 32-byte dWallet identifier
+  bytes   dwallet_pubkey       = 2;  // chain-native public key
+  bytes   user_share_encrypted = 3;  // user's encrypted MPC share
+  string  session_id           = 4;
+}
+
+message InitiateTransferRequest {
+  bytes   dwallet_id           = 1;
+  string  destination_address  = 2;
+  uint64  amount               = 3;
+  string  chain                = 4;
+  bytes   user_share_encrypted = 5;
+  bytes   withdraw_event_proof = 6;  // proof of on-chain WithdrawalRequested event
+}
+
+message InitiateTransferResponse {
+  string  tx_hash   = 1;
+  string  status    = 2;
+  string  session_id = 3;
+}
+
+message GetTransferStatusRequest {
+  string tx_hash = 1;
+}
+
+message GetTransferStatusResponse {
+  string status       = 1;  // "pending" | "confirmed" | "failed"
+  uint64 confirmations = 2;
+  string chain_tx_id  = 3;
+}
+
+message SubmitUserShareRequest {
+  string  session_id           = 1;
+  bytes   user_share_encrypted = 2;
+  bytes   signature            = 3;  // user signs the session_id
+}
+
+message SubmitUserShareResponse {
+  bool   accepted = 1;
+  string message  = 2;
+}
