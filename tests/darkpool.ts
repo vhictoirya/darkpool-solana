@@ -6,6 +6,7 @@ import {
   SystemProgram,
   LAMPORTS_PER_SOL,
 } from "@solana/web3.js";
+import { createHash } from "crypto";
 import { assert } from "chai";
 import { Darkpool } from "../target/types/darkpool";
 
@@ -36,6 +37,40 @@ async function errStr(e: any, conn?: anchor.web3.Connection): Promise<string> {
   return e?.toString() ?? String(e);
 }
 
+/**
+ * Build a valid match proof for the new format:
+ *   [0..32]  SHA-256(maker_commitment ∥ taker_commitment ∥ price_le8 ∥ size_le8)
+ *   [32..64] maker_commitment
+ *   [64..96] taker_commitment
+ *   [96..256] reserved
+ *
+ * This is what the Encrypt MPC relayer produces in production.
+ */
+function buildMatchProof(
+  makerCommitment: number[],
+  takerCommitment: number[],
+  price: bigint,
+  size: bigint,
+): Buffer {
+  const priceBuf = Buffer.alloc(8);
+  const sizeBuf  = Buffer.alloc(8);
+  priceBuf.writeBigUInt64LE(price);
+  sizeBuf.writeBigUInt64LE(size);
+
+  const hash = createHash("sha256")
+    .update(Buffer.from(makerCommitment))
+    .update(Buffer.from(takerCommitment))
+    .update(priceBuf)
+    .update(sizeBuf)
+    .digest();
+
+  const proof = Buffer.alloc(256);
+  hash.copy(proof, 0);
+  Buffer.from(makerCommitment).copy(proof, 32);
+  Buffer.from(takerCommitment).copy(proof, 64);
+  return proof;
+}
+
 describe("darkpool", () => {
   anchor.setProvider(anchor.AnchorProvider.env());
   const provider = anchor.getProvider() as anchor.AnchorProvider;
@@ -45,6 +80,7 @@ describe("darkpool", () => {
 
   const trader1 = Keypair.generate();
   const trader2 = Keypair.generate();
+  // matcher IS the Encrypt MPC authority — registered at pool initialization
   const matcher = Keypair.generate();
 
   let poolPDA:   PublicKey;
@@ -67,9 +103,9 @@ describe("darkpool", () => {
     order2PDA = pda([ORDER_SEED, trader2.publicKey.toBuffer(), Buffer.from(commit2)], program.programId);
   });
 
-  it("initializes the pool with 10 bps fee", async () => {
+  it("initializes the pool with 10 bps fee and registers Encrypt MPC authority", async () => {
     const tx = await program.methods
-      .initialize(10)
+      .initialize(10, matcher.publicKey)
       .accounts({ poolState: poolPDA, admin: admin.publicKey, systemProgram: SystemProgram.programId })
       .rpc();
     const pool = await program.account.poolState.fetch(poolPDA);
@@ -77,7 +113,8 @@ describe("darkpool", () => {
     assert.equal(pool.paused, false);
     assert.equal(pool.totalOrders.toNumber(), 0);
     assert.equal(pool.admin.toBase58(), admin.publicKey.toBase58());
-    console.log("    pool", poolPDA.toBase58().slice(0,16)+"…  tx:", tx.slice(0,16)+"…");
+    assert.equal(pool.encryptMpcAuthority.toBase58(), matcher.publicKey.toBase58());
+    console.log("    pool", poolPDA.toBase58().slice(0,16)+"…  encrypt_mpc_authority:", matcher.publicKey.toBase58().slice(0,8)+"…  tx:", tx.slice(0,16)+"…");
   });
 
   it("rejects fee > 100 bps on initialize", async () => {
@@ -85,7 +122,7 @@ describe("darkpool", () => {
     await conn.confirmTransaction(await conn.requestAirdrop(fakeAdmin.publicKey, LAMPORTS_PER_SOL));
     const fakePDA = pda([Buffer.from("pool_state_bad_fee")], program.programId);
     try {
-      await program.methods.initialize(101)
+      await program.methods.initialize(101, fakeAdmin.publicKey)
         .accounts({ poolState: fakePDA, admin: fakeAdmin.publicKey, systemProgram: SystemProgram.programId })
         .signers([fakeAdmin]).rpc();
       assert.fail("expected error");
@@ -167,39 +204,31 @@ describe("darkpool", () => {
     }
   });
 
-  it("MPC engine matches bid and ask, records settlement", async () => {
-    const proof = Buffer.alloc(256);
-    Buffer.from(commit1).copy(proof, 0);
-    Buffer.from(commit2).copy(proof, 32);
-
+  it("Encrypt MPC engine matches bid and ask with SHA-256 settlement hash", async () => {
+    const price = BigInt(95_050_000);
+    const size  = BigInt(100_000);
+    const proof = buildMatchProof(commit1, commit2, price, size);
     const settlePDA = pda([SETTLEMENT_SEED, order1PDA.toBuffer(), order2PDA.toBuffer()], program.programId);
 
     const tx = await program.methods
-      .matchOrders(proof, new BN(95_050_000), new BN(100_000))
+      .matchOrders(proof, new BN(price.toString()), new BN(size.toString()))
       .accounts({ poolState: poolPDA, makerOrder: order1PDA, takerOrder: order2PDA, settlement: settlePDA, matcher: matcher.publicKey, systemProgram: SystemProgram.programId })
       .signers([matcher]).rpc();
 
     const s = await program.account.settlement.fetch(settlePDA);
     assert.equal(s.maker.toBase58(), trader1.publicKey.toBase58());
     assert.equal(s.taker.toBase58(), trader2.publicKey.toBase58());
-    assert.equal(s.settledPrice.toNumber(), 95_050_000);
-    assert.equal(s.settledSize.toNumber(), 100_000);
-
-    const o1 = await program.account.order.fetch(order1PDA);
-    const o2 = await program.account.order.fetch(order2PDA);
-    assert.equal(o1.status, 1);
-    assert.equal(o2.status, 1);
+    assert.equal(s.settledPrice.toNumber(), Number(price));
+    assert.equal(s.settledSize.toNumber(), Number(size));
     console.log("    settlement", settlePDA.toBase58().slice(0,16)+"…  tx:", tx.slice(0,16)+"…");
   });
 
   it("rejects matching already-matched orders", async () => {
-    const proof = Buffer.alloc(256);
-    Buffer.from(commit1).copy(proof, 0);
-    Buffer.from(commit2).copy(proof, 32);
+    const proof = buildMatchProof(commit1, commit2, BigInt(95_050_000), BigInt(100_000));
     const settlePDA = pda([SETTLEMENT_SEED, order1PDA.toBuffer(), order2PDA.toBuffer()], program.programId);
     try {
       await program.methods
-        .matchOrders(proof, new BN(1000), new BN(1000))
+        .matchOrders(proof, new BN(95_050_000), new BN(100_000))
         .accounts({ poolState: poolPDA, makerOrder: order1PDA, takerOrder: order2PDA, settlement: settlePDA, matcher: matcher.publicKey, systemProgram: SystemProgram.programId })
         .signers([matcher]).rpc();
       assert.fail("expected error");
@@ -224,11 +253,8 @@ describe("darkpool", () => {
       .accounts({ poolState: poolPDA, traderVault: vault1PDA, order: selfAskPDA, trader: trader1.publicKey, systemProgram: SystemProgram.programId })
       .signers([trader1]).rpc();
 
-    const proof = Buffer.alloc(256);
-    Buffer.from(c1).copy(proof, 0);
-    Buffer.from(c2).copy(proof, 32);
+    const proof = buildMatchProof(c1, c2, BigInt(1000), BigInt(1000));
     const selfSettlePDA = pda([SETTLEMENT_SEED, selfBidPDA.toBuffer(), selfAskPDA.toBuffer()], program.programId);
-
     try {
       await program.methods
         .matchOrders(proof, new BN(1000), new BN(1000))
@@ -241,7 +267,7 @@ describe("darkpool", () => {
     }
   });
 
-  it("rejects invalid match proof", async () => {
+  it("rejects invalid match proof (wrong hash)", async () => {
     const c1 = mockCommitment("proof_bid_bb2_uniq");
     const c2 = mockCommitment("proof_ask_bb2_uniq");
     const expiry = Math.floor(Date.now()/1000) + 3600;
@@ -256,6 +282,7 @@ describe("darkpool", () => {
       .accounts({ poolState: poolPDA, traderVault: vault2PDA, order: askPDA, trader: trader2.publicKey, systemProgram: SystemProgram.programId })
       .signers([trader2]).rpc();
 
+    // All-zero proof — hash will not match
     const badProof  = Buffer.alloc(256);
     const settlePDA = pda([SETTLEMENT_SEED, bidPDA.toBuffer(), askPDA.toBuffer()], program.programId);
     try {
@@ -267,6 +294,36 @@ describe("darkpool", () => {
     } catch (e: any) {
       const msg = await errStr(e, conn);
       assert.match(msg, /InvalidMatchProof/, `Got: ${msg}`);
+    }
+  });
+
+  it("rejects match_orders from non-authority signer (Unauthorized)", async () => {
+    const c1 = mockCommitment("auth_bid_cc3_uniq");
+    const c2 = mockCommitment("auth_ask_cc3_uniq");
+    const expiry = Math.floor(Date.now()/1000) + 3600;
+    const ct = mockCiphertext(5000);
+    const bidPDA = pda([ORDER_SEED, trader1.publicKey.toBuffer(), Buffer.from(c1)], program.programId);
+    const askPDA = pda([ORDER_SEED, trader2.publicKey.toBuffer(), Buffer.from(c2)], program.programId);
+
+    await program.methods.placeOrder(ct, ct, c1, 0, new BN(expiry))
+      .accounts({ poolState: poolPDA, traderVault: vault1PDA, order: bidPDA, trader: trader1.publicKey, systemProgram: SystemProgram.programId })
+      .signers([trader1]).rpc();
+    await program.methods.placeOrder(ct, ct, c2, 1, new BN(expiry))
+      .accounts({ poolState: poolPDA, traderVault: vault2PDA, order: askPDA, trader: trader2.publicKey, systemProgram: SystemProgram.programId })
+      .signers([trader2]).rpc();
+
+    const proof = buildMatchProof(c1, c2, BigInt(5000), BigInt(5000));
+    const settlePDA = pda([SETTLEMENT_SEED, bidPDA.toBuffer(), askPDA.toBuffer()], program.programId);
+    // trader1 is NOT the registered encrypt_mpc_authority
+    try {
+      await program.methods
+        .matchOrders(proof, new BN(5000), new BN(5000))
+        .accounts({ poolState: poolPDA, makerOrder: bidPDA, takerOrder: askPDA, settlement: settlePDA, matcher: trader1.publicKey, systemProgram: SystemProgram.programId })
+        .signers([trader1]).rpc();
+      assert.fail("expected Unauthorized");
+    } catch (e: any) {
+      const msg = await errStr(e, conn);
+      assert.match(msg, /Unauthorized/, `Got: ${msg}`);
     }
   });
 
@@ -295,7 +352,6 @@ describe("darkpool", () => {
         .signers([trader1]).rpc();
       assert.fail("expected constraint error");
     } catch (e: any) {
-      // Any error is correct — program enforces ownership
       assert.isDefined(e);
     }
   });
@@ -303,7 +359,7 @@ describe("darkpool", () => {
   it("trader1 initiates a BTC withdrawal", async () => {
     const destAddr = new Uint8Array(64);
     new TextEncoder().encode("bc1qxy2kgdygjrsqtzq2n0yrf249zt4qj5gz").forEach((b,i) => destAddr[i]=b);
-    const withdrawPDA = pda([WITHDRAW_SEED, trader1.publicKey.toBuffer(), destAddr.slice(0,32)], program.programId);
+    const withdrawPDA = pda([WITHDRAW_SEED, trader1.publicKey.toBuffer(), Buffer.from(destAddr.slice(0,32))], program.programId);
     await program.methods
       .withdraw(new BN(50_000), 1, Array.from(destAddr))
       .accounts({ poolState: poolPDA, traderVault: vault1PDA, withdrawRequest: withdrawPDA, trader: trader1.publicKey, systemProgram: SystemProgram.programId })

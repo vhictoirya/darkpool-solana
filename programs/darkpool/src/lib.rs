@@ -13,8 +13,10 @@ pub mod darkpool {
     use super::*;
 
     /// Initialize the global darkpool state (admin only, called once).
-    pub fn initialize(ctx: Context<Initialize>, fee_bps: u16) -> Result<()> {
-        instructions::initialize::handler(ctx, fee_bps)
+    /// `encrypt_mpc_authority` is the aggregated public key of the Encrypt MPC quorum —
+    /// only this signer may call match_orders, binding settlement to the Encrypt network.
+    pub fn initialize(ctx: Context<Initialize>, fee_bps: u16, encrypt_mpc_authority: Pubkey) -> Result<()> {
+        instructions::initialize::handler(ctx, fee_bps, encrypt_mpc_authority)
     }
 
     /// Trader deposits collateral into an encrypted escrow vault.

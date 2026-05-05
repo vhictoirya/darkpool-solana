@@ -2,11 +2,12 @@ use anchor_lang::prelude::*;
 use crate::error::DarkpoolError;
 use crate::state::*;
 
-pub fn handler(ctx: Context<Initialize>, fee_bps: u16) -> Result<()> {
+pub fn handler(ctx: Context<Initialize>, fee_bps: u16, encrypt_mpc_authority: Pubkey) -> Result<()> {
     require!(fee_bps <= MAX_FEE_BPS, DarkpoolError::FeeTooHigh);
 
     let pool = &mut ctx.accounts.pool_state;
     pool.admin = ctx.accounts.admin.key();
+    pool.encrypt_mpc_authority = encrypt_mpc_authority;
     pool.fee_bps = fee_bps;
     pool.paused = false;
     pool.total_orders = 0;
@@ -15,6 +16,7 @@ pub fn handler(ctx: Context<Initialize>, fee_bps: u16) -> Result<()> {
 
     emit!(PoolInitialized {
         admin: pool.admin,
+        encrypt_mpc_authority,
         fee_bps,
     });
 
@@ -41,5 +43,6 @@ pub struct Initialize<'info> {
 #[event]
 pub struct PoolInitialized {
     pub admin: Pubkey,
+    pub encrypt_mpc_authority: Pubkey,
     pub fee_bps: u16,
 }

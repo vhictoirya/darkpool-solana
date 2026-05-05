@@ -7,3 +7,8 @@ test-ledger
 .yarn
 app/.next/
 target/
+.env
+.env.local
+app/.env
+app/.env.local
+*.tsbuildinfo

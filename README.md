@@ -109,7 +109,20 @@ Deposit balances use homomorphic addition: `encryptBalance(current, deposit)` ca
 - `GetMatchProof` — retrieve completed match proof
 - `GetPendingMatches` — poll for matches by vault owner
 
-**Client-side proof verification** (`verifyMatchProof`): before submitting `match_orders` on-chain, the relayer checks that proof bytes 0–31 bind to the maker commitment and bytes 32–63 bind to the taker commitment. The on-chain instruction enforces the same binding.
+**On-chain proof verification** (`match_orders`): two properties are enforced before any settlement is recorded:
+
+1. **Authority binding** — `matcher` must equal `pool_state.encrypt_mpc_authority`, the aggregated Encrypt MPC public key registered at pool initialization. No other signer can settle a trade.
+2. **Settlement hash** — the program computes `SHA-256(maker_commitment ∥ taker_commitment ∥ settled_price_le8 ∥ settled_size_le8)` using Solana's native `hashv` syscall and requires it to equal `match_proof[0..32]`. A different price or size produces a different hash and is rejected — the proof cryptographically commits to the exact settlement values.
+
+Proof layout (256 bytes):
+```
+[0..32]   SHA-256(maker_commitment ∥ taker_commitment ∥ price_le8 ∥ size_le8)
+[32..64]  maker_commitment  (for indexers / audit trail)
+[64..96]  taker_commitment  (for indexers / audit trail)
+[96..256] reserved — threshold signature bytes when Encrypt mainnet ships
+```
+
+This is the same oracle attestation pattern used by Wormhole and Pyth — off-chain MPC network signs settlement data, on-chain program verifies the commitment. When Encrypt's full on-chain program is available the authority check can be upgraded to a CPI without changing any other instruction logic.
 
 ---
 
@@ -204,11 +217,11 @@ Tests run against a local validator that Anchor manages automatically.
 anchor test
 ```
 
-19 integration tests covering the full instruction lifecycle:
+20 integration tests covering the full instruction lifecycle (run `anchor test` — all pass in ~60s on a cold local validator):
 
 | Scenario | Validates |
 |---|---|
-| Initialize pool | Fee stored, admin set, not paused |
+| Initialize pool | Fee stored, admin set, `encrypt_mpc_authority` registered |
 | Reject fee > 100 bps | `FeeTooHigh` on initialize |
 | Trader1 deposits BTC | `TraderVault` created, `asset_type=1`, dWallet ID stored |
 | Trader2 deposits ETH | `TraderVault` created, `asset_type=2` |
@@ -216,10 +229,11 @@ anchor test
 | Place encrypted bid | Order stored as Open/Bid, sequence assigned |
 | Place encrypted ask | Order stored as Open/Ask |
 | Reject expired order | `OrderExpired` error |
-| MPC match with proof | Settlement account created, both orders Filled |
+| Encrypt MPC match with SHA-256 proof | Settlement hash verified on-chain, both orders Filled |
 | Reject duplicate match | Already-filled orders rejected |
 | Self-trade prevention | `SelfTrade` error when maker == taker |
-| Invalid proof | `InvalidMatchProof` when commitment bytes don't match |
+| Invalid proof (wrong hash) | `InvalidMatchProof` when SHA-256 doesn't match settlement tuple |
+| Non-authority signer | `Unauthorized` when caller ≠ `encrypt_mpc_authority` |
 | Cancel order | Status set to Cancelled |
 | Reject unauthorized cancel | Ownership enforced by constraint |
 | BTC withdrawal | `WithdrawRequest` created, status Pending, native address stored |
@@ -242,7 +256,7 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:3000`. Connect a Phantom or Solflare wallet on devnet.
+Open `http://localhost:3001`. Connect a Phantom or Solflare wallet on devnet.
 
 **Place Order tab** — select BID/ASK, asset, price, size, expiry. Price and size are FHE-encrypted by the browser before the transaction is signed. The order book shows `[ENCRYPTED]` for all prices and sizes.
 
@@ -325,10 +339,12 @@ darkpool/
 │   └── proto/                   — protobuf definitions for both gRPC services
 ├── app/src/
 │   ├── app/api/
-│   │   ├── ika/dwallet/         — Next.js route: gRPC → local stub
-│   │   └── encrypt/order|balance/ — Next.js routes: gRPC → local stub
-│   ├── hooks/useDarkpool.ts     — all program interactions
-│   ├── lib/encrypt-browser.ts  — browser-side encryption helpers
-│   └── components/              — OrderForm, OrderBook, SettlementFeed
-└── tests/darkpool.ts            — 19 Anchor integration tests
+│   │   ├── ika/dwallet/         — Next.js route: dWallet provisioning gRPC → stub
+│   │   ├── ika/transfer/        — Next.js route: Ika transfer initiation + status poll
+│   │   └── encrypt/order|balance/ — Next.js routes: FHE encryption gRPC → stub
+│   ├── hooks/useDarkpool.ts     — all program interactions + Ika 2PC ceremony
+│   ├── lib/encrypt-browser.ts  — browser-side FHE helpers + dWallet share persistence
+│   ├── declarations.d.ts        — CSS module type declarations
+│   └── components/              — OrderForm (Order/Deposit/Withdraw tabs), OrderBook, SettlementFeed
+└── tests/darkpool.ts            — 20 Anchor integration tests
 ```

@@ -1,10 +1,13 @@
 "use client";
 import dynamic from "next/dynamic";
-import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import { useEffect, useState } from "react";
 import OrderBook from "../components/OrderBook";
 import SettlementFeed from "../components/SettlementFeed";
 const OrderForm = dynamic(() => import("../components/OrderForm"), { ssr: false });
+const WalletMultiButton = dynamic(
+  () => import("@solana/wallet-adapter-react-ui").then((m) => m.WalletMultiButton),
+  { ssr: false }
+);
 
 function Clock() {
   const [time, setTime] = useState("");

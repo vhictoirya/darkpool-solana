@@ -5,6 +5,10 @@ use anchor_lang::prelude::*;
 #[derive(InitSpace)]
 pub struct PoolState {
     pub admin: Pubkey,
+    /// Aggregated public key of the Encrypt MPC quorum.
+    /// Only this signer may call match_orders — binding settlement authority
+    /// to the Encrypt network rather than an arbitrary relayer keypair.
+    pub encrypt_mpc_authority: Pubkey,
     pub fee_bps: u16,
     pub paused: bool,
     pub total_orders: u64,

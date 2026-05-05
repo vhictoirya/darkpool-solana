@@ -15,6 +15,7 @@ import {
   SystemProgram,
 } from "@solana/web3.js";
 import { AnchorProvider, Program, BN, Wallet } from "@coral-xyz/anchor";
+import { createHash } from "crypto";
 import {
   submitForMatching,
   getMatchProof,
@@ -110,12 +111,30 @@ async function runMatchingRound(
     if (!taker) continue;
 
     try {
-      const proofArr = new Uint8Array(256);
-      proofArr.set(maker.commitment, 0);
-      proofArr.set(taker.commitment, 32);
-      const proofBuf = Buffer.from(proofArr);
       const settledPrice = BigInt(95000000000);
-      const settledSize = BigInt(100000000);
+      const settledSize  = BigInt(100000000);
+
+      // Build proof matching the on-chain format:
+      //   [0..32]  SHA-256(maker_commitment ∥ taker_commitment ∥ price_le8 ∥ size_le8)
+      //   [32..64] maker_commitment
+      //   [64..96] taker_commitment
+      const priceBuf = Buffer.alloc(8);
+      const sizeBuf  = Buffer.alloc(8);
+      priceBuf.writeBigUInt64LE(settledPrice);
+      sizeBuf.writeBigUInt64LE(settledSize);
+
+      const hash = createHash("sha256")
+        .update(Buffer.from(maker.commitment))
+        .update(Buffer.from(taker.commitment))
+        .update(priceBuf)
+        .update(sizeBuf)
+        .digest();
+
+      const proofArr = new Uint8Array(256);
+      hash.copy(proofArr, 0);
+      Buffer.from(maker.commitment).copy(proofArr, 32);
+      Buffer.from(taker.commitment).copy(proofArr, 64);
+      const proofBuf = Buffer.from(proofArr);
       console.log("[matcher] matching " + maker.pubkey.toBase58().slice(0,8) + " x " + taker.pubkey.toBase58().slice(0,8));
       const [settlementPDA] = PublicKey.findProgramAddressSync([SETTLEMENT_SEED, maker.pubkey.toBuffer(), taker.pubkey.toBuffer()], DARKPOOL_PROGRAM_ID);
       const [poolStatePDA] = PublicKey.findProgramAddressSync([POOL_STATE_SEED], DARKPOOL_PROGRAM_ID);

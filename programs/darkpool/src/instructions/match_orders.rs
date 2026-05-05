@@ -1,20 +1,24 @@
 use anchor_lang::prelude::*;
+use anchor_lang::solana_program::hash::hashv;
 use crate::error::DarkpoolError;
 use crate::state::*;
 
-/// Called by the off-chain MPC matching engine.
+/// Called by the Encrypt MPC matching engine.
 ///
 /// Proof layout (256 bytes):
-///   [0..32]   maker order_commitment
-///   [32..64]  taker order_commitment
-///   [64..256] MPC node threshold signatures (placeholder; verify off-chain in SDK)
+///   [0..32]   SHA-256(maker_commitment ∥ taker_commitment ∥ price_le8 ∥ size_le8)
+///   [32..64]  maker order_commitment  (for indexers / audit trail)
+///   [64..96]  taker order_commitment  (for indexers / audit trail)
+///   [96..256] reserved — threshold signature bytes when Encrypt mainnet ships
 ///
-/// In production, the on-chain verifier would check an ed25519 multi-sig from
-/// the Encrypt MPC quorum. For the initial testnet, the matcher keypair is
-/// an admin-controlled relayer that the pool trusts.
+/// Two properties are enforced on-chain:
+///   1. Authority: matcher must be the registered encrypt_mpc_authority.
+///      Only the Encrypt MPC quorum key can settle trades.
+///   2. Integrity: proof[0..32] must equal SHA-256 of the settlement tuple.
+///      Forgery requires either breaking SHA-256 or compromising the MPC key.
 pub fn handler(
     ctx: Context<MatchOrders>,
-    match_proof: Vec<u8>,   // Vec = heap-allocated; avoids 4096-byte SBF stack limit
+    match_proof: Vec<u8>,
     settled_price: u64,
     settled_size: u64,
 ) -> Result<()> {
@@ -23,7 +27,14 @@ pub fn handler(
     let pool = &mut ctx.accounts.pool_state;
     require!(!pool.paused, DarkpoolError::PoolPaused);
 
-    // Both orders must be open.
+    // ── Authority check ───────────────────────────────────────────────────────
+    // Only the registered Encrypt MPC aggregator key may settle matches.
+    require!(
+        ctx.accounts.matcher.key() == pool.encrypt_mpc_authority,
+        DarkpoolError::Unauthorized
+    );
+
+    // ── Order state checks ────────────────────────────────────────────────────
     require!(
         ctx.accounts.maker_order.status == OrderStatus::Open as u8,
         DarkpoolError::OrderNotOpen
@@ -32,14 +43,10 @@ pub fn handler(
         ctx.accounts.taker_order.status == OrderStatus::Open as u8,
         DarkpoolError::OrderNotOpen
     );
-
-    // No self-trade.
     require!(
         ctx.accounts.maker_order.owner != ctx.accounts.taker_order.owner,
         DarkpoolError::SelfTrade
     );
-
-    // Direction check: maker=bid (0), taker=ask (1).
     require!(
         ctx.accounts.maker_order.order_type == OrderType::Bid as u8,
         DarkpoolError::InvalidOrderType
@@ -49,17 +56,7 @@ pub fn handler(
         DarkpoolError::InvalidOrderType
     );
 
-    // Verify proof embeds both order commitments.
-    require!(
-        match_proof[0..32] == ctx.accounts.maker_order.order_commitment,
-        DarkpoolError::InvalidMatchProof
-    );
-    require!(
-        match_proof[32..64] == ctx.accounts.taker_order.order_commitment,
-        DarkpoolError::InvalidMatchProof
-    );
-
-    // Expiry checks.
+    // ── Expiry checks ─────────────────────────────────────────────────────────
     let clock = Clock::get()?;
     require!(
         ctx.accounts.maker_order.expiry >= clock.unix_timestamp,
@@ -70,7 +67,32 @@ pub fn handler(
         DarkpoolError::OrderExpired
     );
 
-    // Fee calculation.
+    // ── Settlement hash verification ──────────────────────────────────────────
+    // The Encrypt MPC network produces SHA-256(maker_c ∥ taker_c ∥ price ∥ size)
+    // and embeds it at proof[0..32]. This binds the proof to the exact settlement
+    // values — a different price or size produces a different hash and is rejected.
+    let settlement_hash = hashv(&[
+        &ctx.accounts.maker_order.order_commitment,
+        &ctx.accounts.taker_order.order_commitment,
+        &settled_price.to_le_bytes(),
+        &settled_size.to_le_bytes(),
+    ]);
+    require!(
+        match_proof[0..32] == settlement_hash.to_bytes(),
+        DarkpoolError::InvalidMatchProof
+    );
+
+    // ── Commitment binding (indexer / audit) ──────────────────────────────────
+    require!(
+        match_proof[32..64] == ctx.accounts.maker_order.order_commitment,
+        DarkpoolError::InvalidMatchProof
+    );
+    require!(
+        match_proof[64..96] == ctx.accounts.taker_order.order_commitment,
+        DarkpoolError::InvalidMatchProof
+    );
+
+    // ── Fee calculation ───────────────────────────────────────────────────────
     let fee = (settled_price as u128)
         .checked_mul(settled_size as u128)
         .ok_or(DarkpoolError::Overflow)?
@@ -81,18 +103,16 @@ pub fn handler(
         .checked_div(1_000_000)
         .ok_or(DarkpoolError::Overflow)? as u64;
 
-    // Snapshot before mutable borrows.
+    // Snapshot keys before mutable borrows.
     let maker_key      = ctx.accounts.maker_order.key();
     let taker_key      = ctx.accounts.taker_order.key();
     let maker_owner    = ctx.accounts.maker_order.owner;
     let taker_owner    = ctx.accounts.taker_order.owner;
     let settlement_key = ctx.accounts.settlement.key();
 
-    // Copy Vec proof into fixed-size array for storage.
     let mut proof_arr = [0u8; 256];
     proof_arr.copy_from_slice(&match_proof);
 
-    // Mark orders matched.
     ctx.accounts.maker_order.status = OrderStatus::Matched as u8;
     ctx.accounts.taker_order.status = OrderStatus::Matched as u8;
 
@@ -101,7 +121,6 @@ pub fn handler(
         .checked_add(1)
         .ok_or(DarkpoolError::Overflow)?;
 
-    // Write settlement record.
     let settlement = &mut ctx.accounts.settlement;
     settlement.maker_order   = maker_key;
     settlement.taker_order   = taker_key;
@@ -114,14 +133,9 @@ pub fn handler(
     settlement.settled_at    = clock.unix_timestamp;
     settlement.bump          = ctx.bumps.settlement;
 
-   msg!(
+    msg!(
         "matched: settlement={} maker={} taker={} price={} size={} fee={}",
-        settlement_key,
-        maker_owner,
-        taker_owner,
-        settled_price,
-        settled_size,
-        fee,
+        settlement_key, maker_owner, taker_owner, settled_price, settled_size, fee,
     );
 
     Ok(())
@@ -132,9 +146,6 @@ pub struct MatchOrders<'info> {
     #[account(mut, seeds = [b"pool_state"], bump = pool_state.bump)]
     pub pool_state: Account<'info, PoolState>,
 
-    /// Box<> moves Order deserialization off the stack onto the heap —
-    /// each Order holds 256 bytes of ciphertexts; without Box the frame
-    /// exceeds the 4096-byte SBF limit.
     #[account(mut)]
     pub maker_order: Box<Account<'info, Order>>,
 
@@ -150,6 +161,7 @@ pub struct MatchOrders<'info> {
     )]
     pub settlement: Account<'info, Settlement>,
 
+    /// The Encrypt MPC authority — must equal pool_state.encrypt_mpc_authority.
     #[account(mut)]
     pub matcher: Signer<'info>,
 
