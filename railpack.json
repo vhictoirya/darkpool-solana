@@ -1,0 +1,6 @@
+{
+  "provider": "node",
+  "install": "npm install",
+  "build": "",
+  "start": "npx ts-node sdk/matching/engine.ts"
+}
