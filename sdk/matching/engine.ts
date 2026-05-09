@@ -184,10 +184,14 @@ export async function startRelayer(
 // Run directly: MATCHER_KEYPAIR=~/.config/solana/matcher.json ts-node engine.ts
 if (require.main === module) {
   const fs = require("fs");
-  const keypairPath = process.env.MATCHER_KEYPAIR || `${process.env.HOME}/.config/solana/id.json`;
-  const keypair = Keypair.fromSecretKey(
-    new Uint8Array(JSON.parse(fs.readFileSync(keypairPath, "utf8")))
-  );
+  let keypairData: number[];
+  const keypairEnv = process.env.MATCHER_KEYPAIR || `${process.env.HOME}/.config/solana/id.json`;
+  if (keypairEnv.startsWith("[")) {
+    keypairData = JSON.parse(keypairEnv);
+  } else {
+    keypairData = JSON.parse(fs.readFileSync(keypairEnv, "utf8"));
+  }
+  const keypair = Keypair.fromSecretKey(new Uint8Array(keypairData));
   const rpcUrl = process.env.RPC_URL || "https://api.devnet.solana.com";
   const connection = new Connection(rpcUrl, "confirmed");
   startRelayer(connection, keypair);
