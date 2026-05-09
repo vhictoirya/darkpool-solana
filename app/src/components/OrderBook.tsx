@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState, useCallback } from "react";
-import { useConnection, useAnchorWallet } from "@solana/wallet-adapter-react";
+import { useConnection } from "@solana/wallet-adapter-react";
+import * as anchor from "@coral-xyz/anchor";
 import { AnchorProvider, Program } from "@coral-xyz/anchor";
 
 const STATUS = ["OPEN", "MATCHED", "CANCELLED", "EXPIRED"];
@@ -16,7 +17,7 @@ function timeLeft(expiry: number): string {
 
 export default function OrderBook() {
   const { connection } = useConnection();
-  const anchorWallet = useAnchorWallet();
+  
   const [bids, setBids] = useState<any[]>([]);
   const [asks, setAsks] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -25,7 +26,7 @@ export default function OrderBook() {
   const fetchOrders = useCallback(async () => {
     try {
       const idl = require("../lib/darkpool.json");
-      const provider = new AnchorProvider(connection, anchorWallet || ({ publicKey: null } as any), {});
+      const provider = new AnchorProvider(connection, { publicKey: anchor.web3.PublicKey.default, signTransaction: async (t: any) => t, signAllTransactions: async (t: any) => t } as any, { commitment: "confirmed" });
       const program = new Program(idl, provider);
       const orders = await (program.account as any).order.all();
       const now = Math.floor(Date.now() / 1000);

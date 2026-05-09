@@ -141,7 +141,9 @@
     {
       "name": "initialize",
       "docs": [
-        "Initialize the global darkpool state (admin only, called once)."
+        "Initialize the global darkpool state (admin only, called once).",
+        "`encrypt_mpc_authority` is the aggregated public key of the Encrypt MPC quorum —",
+        "only this signer may call match_orders, binding settlement to the Encrypt network."
       ],
       "discriminator": [
         175,
@@ -191,6 +193,10 @@
         {
           "name": "fee_bps",
           "type": "u16"
+        },
+        {
+          "name": "encrypt_mpc_authority",
+          "type": "pubkey"
         }
       ]
     },
@@ -237,11 +243,6 @@
         },
         {
           "name": "maker_order",
-          "docs": [
-            "Box<> moves Order deserialization off the stack onto the heap —",
-            "each Order holds 256 bytes of ciphertexts; without Box the frame",
-            "exceeds the 4096-byte SBF limit."
-          ],
           "writable": true
         },
         {
@@ -281,6 +282,9 @@
         },
         {
           "name": "matcher",
+          "docs": [
+            "The Encrypt MPC authority — must equal pool_state.encrypt_mpc_authority."
+          ],
           "writable": true,
           "signer": true
         },
@@ -1100,6 +1104,10 @@
             "type": "pubkey"
           },
           {
+            "name": "encrypt_mpc_authority",
+            "type": "pubkey"
+          },
+          {
             "name": "fee_bps",
             "type": "u16"
           }
@@ -1116,6 +1124,15 @@
         "fields": [
           {
             "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "encrypt_mpc_authority",
+            "docs": [
+              "Aggregated public key of the Encrypt MPC quorum.",
+              "Only this signer may call match_orders — binding settlement authority",
+              "to the Encrypt network rather than an arbitrary relayer keypair."
+            ],
             "type": "pubkey"
           },
           {
