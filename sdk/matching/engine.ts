@@ -163,7 +163,7 @@ export async function startRelayer(
     { commitment: "confirmed" }
   );
   // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const idl = require("../../target/idl/darkpool.json");
+  const idl = require("../sdk/darkpool.json");
   const program = new Program(idl, provider);
 
   console.log(`[matcher] relayer started — program ${DARKPOOL_PROGRAM_ID.toBase58()}`);
