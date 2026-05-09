@@ -36,7 +36,7 @@ export default function OrderBook() {
       setLastRefresh(Date.now());
     } catch (e) { console.error("[OrderBook]", e); }
     finally { setLoading(false); }
-  }, [connection, anchorWallet]);
+  }, [connection]);
 
   useEffect(() => {
     fetchOrders();
